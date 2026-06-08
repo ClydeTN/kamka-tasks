@@ -1,0 +1,30 @@
+# caddy auto-tls via let's encrypt. caddy persists certs in the caddy_data
+# volume so renewals survive restarts.
+{
+  email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+  encode gzip zstd
+
+  # internal /healthz so docker-level healthcheck doesn't depend on TLS
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  # api lives under /api -- strip nothing, the api routes are already prefixed
+  reverse_proxy /api/* api:4000
+
+  # everything else hits the nginx-served react bundle
+  reverse_proxy web:80
+}
+
+# bare-port :80 healthcheck endpoint (used by the compose healthcheck before
+# TLS provisioning completes)
+:80 {
+  handle /healthz {
+    respond "ok" 200
+  }
+  # otherwise redirect to https
+  redir https://{host}{uri} permanent
+}

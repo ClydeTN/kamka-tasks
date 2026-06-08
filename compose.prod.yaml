@@ -1,0 +1,94 @@
+name: tasks
+
+# production compose. consumed only on the VM, by `deploy.sh`.
+# differences from compose.yaml:
+#   - pulls images from ghcr.io instead of building locally
+#   - caddy fronts the stack and handles auto-TLS (Let's Encrypt)
+#   - no host port maps for postgres/redis/api/web -- only caddy on 80/443
+#   - everything restart: always; healthchecks are tighter
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing -- check /opt/tasks/.env}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  api:
+    image: ghcr.io/${IMAGE_OWNER}/tasks-api:${TAG:-latest}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      PORT: "4000"
+      NODE_ENV: production
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    restart: always
+
+  worker:
+    image: ghcr.io/${IMAGE_OWNER}/tasks-worker:${TAG:-latest}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      api:   { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: always
+
+  web:
+    image: ghcr.io/${IMAGE_OWNER}/tasks-web:${TAG:-latest}
+    depends_on:
+      api: { condition: service_healthy }
+    restart: always
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN missing -- check /opt/tasks/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL missing -- check /opt/tasks/.env}
+    depends_on:
+      web: { condition: service_started }
+      api: { condition: service_healthy }
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
