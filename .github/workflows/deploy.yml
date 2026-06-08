@@ -30,6 +30,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
+  # opt every JS-based action into Node 24 ahead of the June 2026 forced cutover.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   # which services actually changed since the previous commit?

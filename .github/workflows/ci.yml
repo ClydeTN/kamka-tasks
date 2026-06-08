@@ -24,6 +24,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# opt every JS-based action into Node 24 ahead of the June 2026 forced cutover.
+# silences the deprecation warnings and surfaces any incompatibility now.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   # detect which top-level directories changed so downstream jobs can skip
   # work that isn't relevant. on push to main we always look at the diff vs
