@@ -6,7 +6,6 @@ this repo is mostly about how it gets built, shipped, and observed.
 
 - **Live app**: <https://kamkait.ayoubabid.me/>
 - **Live status**: <https://status.kamkait.ayoubabid.me/>
-- **Architecture & decisions**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Run it locally
 
@@ -76,7 +75,7 @@ worker/     BullMQ consumer. one job type: due-reminders.
 web/        vite + react + tailwind. served by nginx in production.
 deploy/     what gets shipped to the VM: Caddyfile, deploy.sh, rollback.sh.
 infra/      terraform: VM, firewall, IP, IAM. bootstrap.sh for one-shot WIF setup.
-docs/       ARCHITECTURE.md + ROLLBACK_DRILL.md.
+docs/       rollback-drill.md — evidence the rollback path actually works.
 compose.yaml             local stack — builds locally, healthchecks, named volumes.
 compose.override.yaml    dev-only host port mappings, auto-merged.
 compose.prod.yaml        production stack — pulls from ghcr, adds Caddy + Uptime Kuma.
@@ -132,10 +131,6 @@ jobs run.
 
 ## Deploying / rollback / infra
 
-The deployment story (Terraform, OIDC to GCP, ghcr image promotion, the
-SSH-based deploy, rollback) is documented in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). It's not something a
-contributor needs to do — `main` deploys itself.
-
-The rollback path has been exercised end-to-end; evidence in
-[`docs/ROLLBACK_DRILL.md`](docs/ROLLBACK_DRILL.md).
+`main` deploys itself — contributors don't run anything by hand. The
+rollback path has been exercised end-to-end; evidence in
+[`docs/rollback-drill.md`](docs/rollback-drill.md).
