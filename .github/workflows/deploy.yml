@@ -142,11 +142,10 @@ jobs:
             sleep 4
           done
 
-      - name: rsync deploy artifacts onto the VM
+      - name: copy deploy artifacts onto the VM
         run: |
-          rsync -avz --no-times --no-perms \
-            -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
-            compose.prod.yaml deploy/Caddyfile deploy/deploy.sh deploy/rollback.sh \
+          SCP="scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new"
+          $SCP compose.prod.yaml deploy/Caddyfile deploy/deploy.sh deploy/rollback.sh \
             deploy@${{ steps.vm.outputs.ip }}:/opt/tasks/
           ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
             'chmod +x /opt/tasks/deploy.sh /opt/tasks/rollback.sh'
