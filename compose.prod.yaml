@@ -71,6 +71,19 @@ services:
       start_period: 5s
       retries: 3
 
+  uptime:
+    image: louislam/uptime-kuma:1
+    volumes:
+      - uptime_data:/app/data
+    restart: always
+    # the image ships an internal healthcheck script
+    healthcheck:
+      test: ["CMD", "node", "extra/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
   caddy:
     image: caddy:2-alpine
     ports:
@@ -97,3 +110,4 @@ volumes:
   redisdata:
   caddy_data:
   caddy_config:
+  uptime_data:

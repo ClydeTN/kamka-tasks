@@ -13,3 +13,10 @@
   # everything else hits the nginx-served react bundle
   reverse_proxy web:80
 }
+
+# uptime kuma on its own subdomain (nip.io maps any sub.<ip>.nip.io to the
+# same ip, so this works out of the box without extra dns)
+status.{$DOMAIN} {
+  encode gzip zstd
+  reverse_proxy uptime:3001
+}
