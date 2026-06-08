@@ -1,0 +1,13 @@
+{
+  "version": "6",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1780660345386,
+      "tag": "0000_regular_psynapse",
+      "breakpoints": true
+    }
+  ]
+}

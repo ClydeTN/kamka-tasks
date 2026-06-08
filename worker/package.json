@@ -1,0 +1,13 @@
+{
+  "name": "tasks-worker",
+  "version": "0.2.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "bullmq": "^5.7.6",
+    "pg": "^8.11.5"
+  }
+}
