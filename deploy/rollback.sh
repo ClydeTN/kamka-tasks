@@ -4,7 +4,7 @@
 set -euo pipefail
 
 : "${TAG:?TAG required -- a git sha that was previously deployed}"
-: "${IMAGE_OWNER:=ClydeTN}"
+: "${IMAGE_OWNER:=clydetn}"
 
 # verify the images exist on ghcr before we pull -- avoids partial rollback
 for service in api worker web; do

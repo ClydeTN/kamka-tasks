@@ -71,7 +71,7 @@ variable "acme_email" {
 variable "image_owner" {
   description = "GitHub user/org that owns the ghcr.io images (used in compose.prod.yaml)"
   type        = string
-  default     = "ClydeTN"
+  default     = "clydetn"
 }
 
 variable "github_repo" {

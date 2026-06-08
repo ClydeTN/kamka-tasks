@@ -19,7 +19,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_OWNER: ${{ github.repository_owner }}
 
 jobs:
   # which services actually changed since the previous commit?
@@ -47,6 +46,8 @@ jobs:
   build:
     needs: changes
     runs-on: ubuntu-latest
+    env:
+      IMAGE_OWNER: clydetn
     strategy:
       fail-fast: false
       matrix:
@@ -105,6 +106,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      IMAGE_OWNER: clydetn
     steps:
       - uses: actions/checkout@v4
 
