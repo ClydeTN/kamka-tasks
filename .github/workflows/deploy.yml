@@ -1,0 +1,184 @@
+name: deploy
+
+# triggered by push to main (any change). also manual via workflow_dispatch.
+# the changes detection step decides whether to actually rebuild each
+# service or just retag the existing image at the new SHA.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write     # required to push to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # which services actually changed since the previous commit?
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api:    ${{ steps.f.outputs.api }}
+      worker: ${{ steps.f.outputs.worker }}
+      web:    ${{ steps.f.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          base: ${{ github.event.before }}
+          filters: |
+            api:
+              - 'api/**'
+            worker:
+              - 'worker/**'
+            web:
+              - 'web/**'
+
+  build:
+    needs: changes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            changed: ${{ needs.changes.outputs.api }}
+          - service: worker
+            changed: ${{ needs.changes.outputs.worker }}
+          - service: web
+            changed: ${{ needs.changes.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # if the service's source didn't change, skip the build entirely --
+      # just retag the existing :latest as :<sha>. ~1s registry-side op,
+      # vs a 30-60s rebuild.
+      - name: check for existing :latest (when source unchanged)
+        id: existing
+        if: matrix.changed != 'true'
+        run: |
+          if docker buildx imagetools inspect \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/tasks-${{ matrix.service }}:latest >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: retag (no source change)
+        if: matrix.changed != 'true' && steps.existing.outputs.exists == 'true'
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/tasks-${{ matrix.service }}:${{ github.sha }} \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/tasks-${{ matrix.service }}:latest
+
+      - name: build + push
+        if: matrix.changed == 'true' || steps.existing.outputs.exists == 'false'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/tasks-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/tasks-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # OIDC -> tf-runner SA. only used here to look up the VM's external IP.
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/685230180124/locations/global/workloadIdentityPools/gh-actions-tasks/providers/github
+          service_account: tasks-tf-runner@formulai.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: read VM IP from GCE
+        id: vm
+        run: |
+          IP=$(gcloud compute addresses describe tasks-vm-ip \
+                --region=europe-west1 \
+                --project=formulai \
+                --format='value(address)')
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+          echo "domain=$IP.nip.io" >> $GITHUB_OUTPUT
+
+      - name: install deploy ssh key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # wait briefly for the VM to be ssh-ready (first boot can be slow
+          # if it's a brand new instance running cloud-init)
+          for i in $(seq 1 30); do
+            if ssh-keyscan -T 5 -H ${{ steps.vm.outputs.ip }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              break
+            fi
+            sleep 4
+          done
+
+      - name: rsync deploy artifacts onto the VM
+        run: |
+          rsync -avz --no-times --no-perms \
+            -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
+            compose.prod.yaml deploy/Caddyfile deploy/deploy.sh deploy/rollback.sh \
+            deploy@${{ steps.vm.outputs.ip }}:/opt/tasks/
+          ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
+            'chmod +x /opt/tasks/deploy.sh /opt/tasks/rollback.sh'
+
+      - name: run deploy on the VM
+        run: |
+          ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
+            "TAG='${{ github.sha }}' \
+             IMAGE_OWNER='${{ env.IMAGE_OWNER }}' \
+             GHCR_TOKEN='${{ secrets.GITHUB_TOKEN }}' \
+             /opt/tasks/deploy.sh"
+
+      - name: smoke test
+        run: |
+          # caddy needs ~30s for first cert; subsequent deploys hit the
+          # green path immediately. allow generous retry on first deploy.
+          for i in $(seq 1 36); do
+            code=$(curl -sko /dev/null -w '%{http_code}' \
+                    "https://${{ steps.vm.outputs.domain }}/api/tasks" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "smoke test OK ($code) at https://${{ steps.vm.outputs.domain }}"
+              exit 0
+            fi
+            echo "attempt $i: http $code, retrying"
+            sleep 5
+          done
+          echo "smoke test failed"
+          exit 1
+
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "## deploy summary"
+            echo "- tag: \`${{ github.sha }}\`"
+            echo "- url: https://${{ steps.vm.outputs.domain }}"
+            echo "- vm:  ${{ steps.vm.outputs.ip }}"
+          } >> $GITHUB_STEP_SUMMARY
