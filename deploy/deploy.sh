@@ -35,6 +35,13 @@ fi
 docker compose --env-file /opt/tasks/.env -f compose.prod.yaml pull
 docker compose --env-file /opt/tasks/.env -f compose.prod.yaml up -d --remove-orphans
 
+# Caddyfile lives behind a bind mount, so docker compose won't restart caddy
+# when only the file content changes. force-reload so config edits actually
+# take effect on the next deploy.
+docker compose --env-file /opt/tasks/.env -f compose.prod.yaml \
+  exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
+  || docker compose --env-file /opt/tasks/.env -f compose.prod.yaml restart caddy
+
 # wait for everything to settle. 120s = enough for cold-start, migration,
 # and caddy's first ACME exchange on a fresh VM.
 echo "waiting for containers to become healthy..."
