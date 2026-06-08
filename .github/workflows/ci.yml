@@ -3,7 +3,9 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, develop]   # PRs always run CI; pushes to main/develop too.
+                                # deploy.yml only fires on main, so develop is
+                                # validated but never auto-deployed.
 
 concurrency:
   group: ci-${{ github.ref }}

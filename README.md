@@ -1,232 +1,186 @@
 # tasks
 
-A small three-tier task tracker, productionised end-to-end: containerised,
-built and shipped through CI, deployed to a GCP VM via Terraform, fronted by
-Caddy with auto-TLS, and watched by Uptime Kuma. The app itself is a
-deliberately simple TS + React + BullMQ stack — the point is the deployment
-lifecycle around it.
+A small three-tier task tracker (api + worker + web + postgres + redis), wired
+end-to-end: containerised, built and shipped by GitHub Actions, deployed to a
+GCP VM by Terraform, fronted by Caddy with auto-TLS, watched by Uptime Kuma.
+The app is deliberately simple — the work is in the lifecycle around it.
 
 - **Live**: <https://kamkait.ayoubabid.me/>
-- **Monitoring**: <https://status.kamkait.ayoubabid.me/>
-- **CI/CD**: GitHub Actions, [`actions` tab](https://github.com/ClydeTN/kamka-tasks/actions)
-- **Container images**: [`ghcr.io/clydetn/tasks-{api,worker,web}`](https://github.com/ClydeTN?tab=packages&repo_name=kamka-tasks)
+- **Status**: <https://status.kamkait.ayoubabid.me/>
+- **CI/CD**: <https://github.com/ClydeTN/kamka-tasks/actions>
+- **PDF**: [`docs/ARCHITECTURE.pdf`](docs/ARCHITECTURE.pdf)
 
-## architecture
+## TL;DR — clone and run
+
+You need **Docker** with the `compose` plugin. Nothing else.
+
+```sh
+git clone https://github.com/ClydeTN/kamka-tasks
+cd kamka-tasks
+cp .env.example .env          # set POSTGRES_PASSWORD to anything
+docker compose up --build
+```
+
+Open <http://localhost:8080>. Five containers come up:
+
+| port | service |
+|---|---|
+| 8080 | `web` (nginx + react bundle) |
+| 4000 | `api` (express + ts + drizzle) |
+| 5432 | `postgres` |
+| 6379 | `redis` |
+| —    | `worker` (BullMQ consumer, no port) |
+
+The api runs Drizzle migrations on boot; nothing to do by hand. To wipe the
+DB and start clean: `docker compose down -v`.
+
+## Architecture
 
 ```
    developer ──git push──► GitHub ─┬─► Actions: build api/worker/web → ghcr.io
                                    │
-                                   └─► Actions: ssh deploy ─┐
-                                                            ▼
-                                                ┌────────────────────────────────┐
-                                                │  GCP VM (Debian 12, e2-small)  │
-                                                │  /opt/tasks  ▲                 │
-                                                │              │ docker compose  │
-                                                │  ┌───────────┴───────────────┐ │
-                                                │  │ caddy ─► web (nginx+react)│ │
-                                                │  │       └► api (express)    │ │
-                                                │  │             ├► postgres   │ │
-                                                │  │             ├► redis ◄──┐ │ │
-                                                │  │             └► worker ──┘ │ │
-                                                │  │       └► uptime kuma      │ │
-                                                │  └───────────────────────────┘ │
-                                                └────────────────────────────────┘
+                                   └─► Actions: OIDC→GCP, ssh deploy
+                                                        ▼
+                                          ┌────────────────────────────────┐
+                                          │  GCP VM (Debian 12, e2-small)  │
+                                          │   docker compose -f prod.yaml  │
+                                          │                                │
+                                          │   caddy ─► web  (nginx+react)  │
+                                          │        └─► api  (express)      │
+                                          │              ├─► postgres      │
+                                          │              ├─► redis ◄──┐    │
+                                          │              └─► worker ──┘    │
+                                          │        └─► uptime-kuma         │
+                                          └────────────────────────────────┘
 ```
 
-- **api** (`api/`): Express + TypeScript + Drizzle, owns the schema, enqueues
-  BullMQ jobs, writes activity rows
-- **worker** (`worker/`): BullMQ consumer for `due-reminders` — fires when a
-  task with a due date hits its deadline
-- **web** (`web/`): Vite + React + TypeScript bundle served by nginx
-- **caddy**: edge proxy on `:80/:443`, automatic Let's Encrypt
-- **uptime**: [Uptime Kuma](https://uptime.kuma.pet/) at `status.<domain>`
+- **api** owns the schema (Drizzle migrations on boot), enqueues a
+  `due-reminders` BullMQ job whenever a task has a due date, writes activity
+  rows on every state change. Caches the task list in Redis (30s TTL).
+- **worker** is a single BullMQ consumer — when a reminder fires it checks
+  the task still exists & isn't done, then inserts a `due_reminder` row into
+  `activity`.
+- **web** is a Vite + React + Tailwind SPA, built into a static bundle and
+  served by nginx.
+- **caddy** terminates TLS (auto Let's Encrypt) and proxies `/api/*` to the
+  api, everything else to the web.
 
-The deploy story: a push to `main` is built into three images at the commit
-SHA, pushed to ghcr, SSH'd onto the VM, and `docker compose pull && up -d`'d.
-Smart skip: a service whose code didn't change is **retagged registry-side**
-at the new SHA instead of rebuilt (≈1 second instead of 30–60).
+## Persistent data (volumes)
 
-## running locally
+Compose declares named volumes so nothing is lost between `up`/`down`. Use
+`docker compose down -v` only when you want a clean DB.
 
-You need Docker. Then:
+| volume | what | restore from |
+|---|---|---|
+| `pgdata` | postgres tables (tasks, tags, comments, activity, …) | nightly `pg_dump`s in `/opt/tasks/backups/` on the VM (14-day retention) |
+| `redisdata` | BullMQ job queue + cache state | regenerated automatically; no backup needed |
+| `caddy_data` | Let's Encrypt account + certificates | regenerated automatically; deleting forces re-issuance |
+| `caddy_config` | runtime Caddy state | regenerated automatically |
+| `uptime_data` | Uptime Kuma sqlite (monitors + history) | dump/restore manually if you care; the assessment doesn't require it |
+
+To run a manual DB backup on the VM:
 
 ```sh
-cp .env.example .env       # set POSTGRES_PASSWORD to anything
-docker compose up --build
+ssh deploy@<vm-ip> sudo systemctl start tasks-backup-db.service
 ```
 
-Five healthy containers come up. The app is on <http://localhost:8080>.
-`compose.override.yaml` is auto-merged in dev — it exposes each container's
-port on the host so you can `psql`, `redis-cli`, or `curl` directly. Change
-the host-side ports in `.env` if any are already taken.
+## Deploying your own copy
 
-Wipe DB between runs:
+Prerequisites: `gcloud`, `gh` (GitHub CLI), `terraform >= 1.6`, a GCP project
+with billing enabled, a public GitHub repo at `OWNER/REPO`.
 
 ```sh
-docker compose down -v
-```
-
-## running locally without docker
-
-You need a local Postgres and Redis. Then three terminals:
-
-```sh
-cd api && npm install && npm run build
-DATABASE_URL=postgres://localhost/tasks REDIS_URL=redis://localhost:6379 npm start
-
-cd worker && npm install
-DATABASE_URL=postgres://localhost/tasks REDIS_URL=redis://localhost:6379 npm start
-
-cd web && npm install && npm run dev
-```
-
-The frontend's Vite dev server proxies `/api` to `localhost:4000` — see
-`web/vite.config.ts`.
-
-## deploying your own copy
-
-Prerequisites:
-
-- a GCP project with billing enabled (you need
-  `billing.resourceAssociations.create` if you want to bind to a billing
-  account in Terraform — easiest: deploy into a project that's already
-  billing-linked)
-- `gcloud`, `gh` (GitHub CLI), `terraform >= 1.6` installed locally
-- a public GitHub repo at `OWNER/REPO`
-
-**1. One-shot bootstrap (creates the WIF pool + tf-runner SA + TF state bucket):**
-
-```sh
+# 1. one-shot bootstrap of the GCP side (only thing that needs your gcloud creds).
+#    creates the WIF pool, the tf-runner SA, and the GCS state bucket.
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
 GITHUB_OWNER=YOUR_GH_USER GITHUB_REPO=YOUR_GH_USER/YOUR_REPO \
   ./infra/bootstrap.sh
-```
 
-This prints values you copy into `infra/versions.tf` (the GCS bucket name) and
-`.github/workflows/{terraform,deploy}.yml` (the WIF provider path). After this,
-**nothing else needs local credentials**.
-
-**2. Generate a dedicated CI SSH key and store the private half as a GH secret:**
-
-```sh
+# 2. generate a dedicated CI deploy key, store the private half in GH secrets.
 ssh-keygen -t ed25519 -f ~/.ssh/your_deploy_key -N "" -C "ci-deploy"
 gh secret set DEPLOY_SSH_KEY < ~/.ssh/your_deploy_key
-```
+# then add the public half to infra/prod.auto.tfvars (ssh_pub_keys).
 
-Add the **public** half to `infra/prod.auto.tfvars` (`ssh_pub_keys`).
-
-**3. Trigger Terraform from CI (no local keys needed):**
-
-```sh
+# 3. provision the VM via Terraform (runs in CI via OIDC — no local keys needed).
 gh workflow run terraform.yml -f action=apply
+
+# 4. ship the app.
+git push origin main
 ```
 
-The job creates a static IP, firewall rules, a service account for the VM, and
-the e2-small instance itself. First boot runs `cloud-init.sh` which installs
-docker, creates the `deploy` user, generates a strong Postgres password into
-`/opt/tasks/.env`, sets up UFW + fail2ban + unattended-upgrades, and
-installs a nightly pg_dump systemd timer.
+Everything after step 1 is OIDC-only — no service-account JSON, no key files.
 
-**4. First deploy:**
-
-```sh
-git push origin main          # or:
-gh workflow run deploy.yml
-```
-
-Pipeline output ends with the URL and a green smoke-test step.
-
-## day-to-day ops
+## Day-to-day ops
 
 | | |
 |---|---|
-| ship a change | `git push origin main` |
-| roll back to an old SHA | `ssh deploy@<vm> 'TAG=<sha> /opt/tasks/rollback.sh'` |
-| ssh in | `ssh deploy@<vm-ip>` (the IP is the `nat_ip` of `tasks-vm-ip`) |
-| tail logs | `ssh deploy@<vm> 'docker compose -f /opt/tasks/compose.prod.yaml logs -f'` |
-| manual db backup | `ssh deploy@<vm> 'sudo systemctl start tasks-backup-db.service'` (auto-runs nightly at 03:00 UTC, 14-day retention in `/opt/tasks/backups/`) |
-| monitoring | <https://status.kamkait.ayoubabid.me/> — first visit creates the admin user |
+| ship a change | `git push origin main` (deploy.yml runs) |
+| roll back to an old SHA | `ssh deploy@<vm> 'GHCR_TOKEN=<gh_token> TAG=<sha> /opt/tasks/rollback.sh'` — exercised end-to-end, evidence in `docs/ROLLBACK_DRILL.md` |
+| ssh in | `ssh deploy@<vm-ip>` |
+| tail prod logs | `ssh deploy@<vm> 'docker compose -f /opt/tasks/compose.prod.yaml logs -f'` |
+| trigger a manual backup | `ssh deploy@<vm> sudo systemctl start tasks-backup-db.service` |
+| open monitoring | <https://status.kamkait.ayoubabid.me/> |
 | tear it all down | `gh workflow run terraform.yml -f action=destroy` |
 
-## secrets — how they flow
+## Branch & contribution policy
 
-Three kinds of secret, three different places:
+| branch | CI runs? | auto-deploys? |
+|---|---|---|
+| `main` | ✅ on push + PR | ✅ pushes deploy to prod |
+| `develop` | ✅ on push + PR | ❌ never deploys |
+| feature branches | ✅ once a PR is opened | ❌ |
 
-- **Postgres password**: generated by Terraform as a `random_password`,
-  written into the VM's `/opt/tasks/.env` (mode 0600, owned by `deploy`),
-  and stored in the TF state file inside the private GCS state bucket.
-  Never in git, never in the image.
-- **GCP credentials**: there are no long-lived ones. GitHub Actions exchanges
-  its short-lived OIDC token for a GCP access token via Workload Identity
-  Federation, scoped to this exact repo. The federation is set up once by
-  `infra/bootstrap.sh`.
-- **SSH key for CI to deploy**: dedicated keypair generated locally, public
-  half goes into `prod.auto.tfvars` (not secret), private half stored as
-  the `DEPLOY_SSH_KEY` GitHub Actions secret.
+Workflow: branch from `develop` → PR into `develop` (CI must be green) →
+when ready, PR `develop` → `main` for the release. `main` is the only
+branch that has the right to touch prod.
 
-Local development uses `.env` (gitignored). A `.env.example` is committed
-with safe defaults so a reviewer can `cp` and edit one value.
+## Secrets — how each one flows
 
-## repository tour
+| secret | where it lives | who writes it |
+|---|---|---|
+| Postgres password | `/opt/tasks/.env` (0600, `deploy`-owned) + Terraform state in private GCS bucket | `random_password.postgres` resource at first apply |
+| GCP credentials | **nowhere on disk** — short-lived OIDC tokens minted per workflow run | GitHub OIDC issuer ⇄ GCP STS via WIF |
+| CI deploy SSH key | private half in the `DEPLOY_SSH_KEY` GitHub Actions secret; public half committed to `infra/prod.auto.tfvars` | generated once locally with `ssh-keygen` |
+| Local dev DB password | `.env` (gitignored), copied from `.env.example` | the developer |
+
+`.env.example` is the only file you'll edit before a first local run, and
+the value it asks for (`POSTGRES_PASSWORD`) is meaningless because the
+local DB is throw-away.
+
+## Dev vs prod parity
+
+Same images / migrations / env-var names. What differs:
+
+- **edge**: dev exposes service ports directly to the host (via
+  `compose.override.yaml`); prod hides everything behind Caddy
+- **registry**: dev builds locally, prod pulls from `ghcr.io`
+- **secrets**: dev uses whatever you wrote in `.env`; prod uses a
+  Terraform-generated random password and a Caddy-managed LE cert
+- **hardening**: prod adds UFW, fail2ban, unattended-upgrades, and a
+  nightly `pg_dump` systemd timer
+
+## Repository tour
 
 | path | what |
 |---|---|
-| `api/` | Express + TS + Drizzle. Schema, routes, BullMQ producer. |
-| `worker/` | BullMQ consumer. Single job type. |
-| `web/` | Vite + React + Tailwind dashboard. |
-| `compose.yaml` | Local dev stack — builds locally, exposes service ports. |
-| `compose.override.yaml` | Dev-only port mappings, auto-merged. |
-| `compose.prod.yaml` | Production stack — pulls from ghcr, adds Caddy + Uptime Kuma, no host ports. |
-| `infra/` | Terraform: VM, firewall, IP, IAM. Plus `bootstrap.sh` for the WIF setup. |
+| `api/` | Express + TS + Drizzle. Schema, routes, BullMQ producer. 4-stage Dockerfile. |
+| `worker/` | BullMQ consumer. One job type. 2-stage Dockerfile. |
+| `web/` | Vite + React + TS + Tailwind. 3-stage Dockerfile (deps → vite build → nginx serve). |
+| `compose.yaml` | Local stack: builds locally, healthchecks, named volumes. |
+| `compose.override.yaml` | Dev-only host port mappings, auto-merged. |
+| `compose.prod.yaml` | Prod stack: pulls from ghcr, adds Caddy + Uptime Kuma, no host ports. |
 | `deploy/` | What gets shipped to the VM: `Caddyfile`, `deploy.sh`, `rollback.sh`. |
+| `infra/` | Terraform: VM, firewall, IP, IAM, cloud-init startup script, and `bootstrap.sh` for the WIF setup. |
 | `.github/workflows/` | `ci.yml` (path-filtered checks), `terraform.yml` (manual apply via WIF), `deploy.yml` (build → ghcr → SSH deploy). |
+| `docs/ARCHITECTURE.{md,pdf}` | The submission PDF: diagram + decisions + tradeoffs + limits. |
+| `docs/ROLLBACK_DRILL.md` | Evidence the rollback path actually works. |
 
-## what the worker does
+## Known limits & what I'd do next
 
-The api enqueues a `due-reminders` BullMQ job whenever a task is created
-with a due date. The job is delayed until the due date hits, then the worker
-picks it up and writes a `due_reminder` row into the `activity` table — which
-surfaces on the dashboard's live activity feed.
+- single VM = a reboot is downtime; would move to Cloud Run + Cloud SQL for real prod
+- no automated test suite — would add Vitest for the api and one Playwright happy-path for the web
+- migrations run on api boot — convenient now, would split into a one-shot job for real prod
+- secrets live in `/opt/tasks/.env` — fine for a single-tenant VM, but a multi-VM story should pull from GCP Secret Manager
 
-## dev vs prod parity
-
-What's the same:
-
-- same three images (api/worker/web), same Postgres major version, same Redis
-  major version
-- same migration path — `drizzle-orm/node-postgres/migrator` runs on api boot
-- same env vars driving the same code paths
-
-What differs:
-
-- prod adds Caddy in front and Uptime Kuma alongside; dev exposes ports
-  directly to the host
-- prod images come from ghcr; dev builds locally
-- prod uses a generated random Postgres password and a real LE cert; dev uses
-  whatever's in `.env`
-- prod runs unattended-upgrades, UFW, fail2ban, and a nightly DB backup; dev
-  runs none of that
-
-## known limitations / what I'd do next
-
-- **single VM, no HA**: a reboot is downtime. Postgres on the same box as
-  everything else. Acceptable for an assessment; for real prod I'd put
-  Postgres on Cloud SQL and run the apps on >=2 VMs behind a managed LB,
-  or move to a managed runtime like Cloud Run.
-- **no automated tests in CI** — there aren't any to run. I'd add Vitest
-  for the api (schema + routes) and Playwright for a happy-path web smoke.
-- **secrets in the VM `.env`** rather than a real secret manager. Acceptable
-  here because the VM is single-tenant and the file is 0600; a multi-VM
-  story should pull from GCP Secret Manager.
-- **migrations on boot** is convenient but couples deploys to schema work.
-  For a real prod I'd run migrations as a one-shot k8s/job step before the
-  api comes up, with a flyway/sqitch-style versioning.
-- **no staging environment**. Could be added with a second `terraform
-  workspace` and a `staging` GHA environment gating its deploys.
-
-## attribution
-
-The app was deliberately a generic "borrow from a friend" starter so the
-focus stays on the deployment lifecycle. Everything in `infra/`, `deploy/`,
-`.github/workflows/`, and the production-shaping commits is my own work.
+More detail and reasoning in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
