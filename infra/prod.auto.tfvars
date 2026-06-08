@@ -5,6 +5,7 @@
 # and GH Actions secrets respectively.
 
 acme_email = "ayoub.abid@insat.u-carthage.tn"
+domain     = "kamkait.ayoubabid.me"
 
 ssh_pub_keys = [
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKfEXIlBHMHlyWIaSXkpMOhPkkEKzKH6RkKBGf95XPLK kamka-tasks-ci-deploy",

@@ -6,8 +6,8 @@ Caddy with auto-TLS, and watched by Uptime Kuma. The app itself is a
 deliberately simple TS + React + BullMQ stack — the point is the deployment
 lifecycle around it.
 
-- **Live**: <https://35.206.142.144.nip.io/>
-- **Monitoring**: <https://status.35.206.142.144.nip.io/>
+- **Live**: <https://kamkait.ayoubabid.me/>
+- **Monitoring**: <https://status.kamkait.ayoubabid.me/>
 - **CI/CD**: GitHub Actions, [`actions` tab](https://github.com/ClydeTN/kamka-tasks/actions)
 - **Container images**: [`ghcr.io/clydetn/tasks-{api,worker,web}`](https://github.com/ClydeTN?tab=packages&repo_name=kamka-tasks)
 
@@ -146,7 +146,7 @@ Pipeline output ends with the URL and a green smoke-test step.
 | ssh in | `ssh deploy@<vm-ip>` (the IP is the `nat_ip` of `tasks-vm-ip`) |
 | tail logs | `ssh deploy@<vm> 'docker compose -f /opt/tasks/compose.prod.yaml logs -f'` |
 | manual db backup | `ssh deploy@<vm> 'sudo systemctl start tasks-backup-db.service'` (auto-runs nightly at 03:00 UTC, 14-day retention in `/opt/tasks/backups/`) |
-| monitoring | <https://status.35.206.142.144.nip.io/> — first visit creates the admin user |
+| monitoring | <https://status.kamkait.ayoubabid.me/> — first visit creates the admin user |
 | tear it all down | `gh workflow run terraform.yml -f action=destroy` |
 
 ## secrets — how they flow

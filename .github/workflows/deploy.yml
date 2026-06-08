@@ -131,7 +131,6 @@ jobs:
                 --project=formulai \
                 --format='value(address)')
           echo "ip=$IP" >> $GITHUB_OUTPUT
-          echo "domain=$IP.nip.io" >> $GITHUB_OUTPUT
 
       - name: install deploy ssh key
         run: |
@@ -155,6 +154,17 @@ jobs:
           ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
             'chmod +x /opt/tasks/deploy.sh /opt/tasks/rollback.sh'
 
+      - name: read DOMAIN from VM /opt/tasks/.env
+        id: domain
+        run: |
+          # terraform wrote DOMAIN into /opt/tasks/.env on first boot. fall back
+          # to the nip.io form if for some reason it's missing.
+          D=$(ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
+                'grep ^DOMAIN= /opt/tasks/.env | cut -d= -f2' \
+              || echo "${{ steps.vm.outputs.ip }}.nip.io")
+          echo "value=$D" >> $GITHUB_OUTPUT
+          echo "deploying to https://$D"
+
       - name: run deploy on the VM
         run: |
           ssh -i ~/.ssh/id_deploy deploy@${{ steps.vm.outputs.ip }} \
@@ -169,9 +179,9 @@ jobs:
           # green path immediately. allow generous retry on first deploy.
           for i in $(seq 1 36); do
             code=$(curl -sko /dev/null -w '%{http_code}' \
-                    "https://${{ steps.vm.outputs.domain }}/api/tasks" || echo 000)
+                    "https://${{ steps.domain.outputs.value }}/api/tasks" || echo 000)
             if [ "$code" = "200" ]; then
-              echo "smoke test OK ($code) at https://${{ steps.vm.outputs.domain }}"
+              echo "smoke test OK ($code) at https://${{ steps.domain.outputs.value }}"
               exit 0
             fi
             echo "attempt $i: http $code, retrying"
@@ -186,6 +196,6 @@ jobs:
           {
             echo "## deploy summary"
             echo "- tag: \`${{ github.sha }}\`"
-            echo "- url: https://${{ steps.vm.outputs.domain }}"
+            echo "- url: https://${{ steps.domain.outputs.value }}"
             echo "- vm:  ${{ steps.vm.outputs.ip }}"
           } >> $GITHUB_STEP_SUMMARY

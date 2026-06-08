@@ -1,7 +1,7 @@
 # rollback drill — 2026-06-08
 
 Exercised end-to-end against the live deploy at
-`https://35.206.142.144.nip.io`. Captures here so a reviewer doesn't have to
+`https://kamkait.ayoubabid.me`. Captures here so a reviewer doesn't have to
 trust the script blindly.
 
 ## what we did
@@ -29,7 +29,7 @@ tasks-api-1    Up 13 seconds (healthy)   …/tasks-api:c931810…
 tasks-web-1    Up  7 seconds (healthy)   …/tasks-web:c931810…
 tasks-worker-1 Up  7 seconds (healthy)   …/tasks-worker:c931810…
 
-$ curl -o /dev/null -w '%{http_code}\n' https://35.206.142.144.nip.io/api/tasks
+$ curl -o /dev/null -w '%{http_code}\n' https://kamkait.ayoubabid.me/api/tasks
 200
 ```
 
