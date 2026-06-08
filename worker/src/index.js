@@ -1,5 +1,16 @@
 const { Worker } = require('bullmq');
 const { Pool } = require('pg');
+const fs = require('fs');
+
+const heartbeatPath = process.env.HEARTBEAT_PATH || '/tmp/worker-alive';
+
+function touchHeartbeat() {
+  try {
+    fs.writeFileSync(heartbeatPath, String(Date.now()));
+  } catch (e) {
+    console.error('[worker] heartbeat write failed', e.message);
+  }
+}
 
 function parseRedisUrl(url) {
   const u = new URL(url);
@@ -52,6 +63,7 @@ const worker = new Worker(
 
 worker.on('completed', (job) => {
   console.log(`[worker] job ${job.id} done`);
+  touchHeartbeat();
 });
 
 worker.on('failed', (job, err) => {
@@ -60,7 +72,11 @@ worker.on('failed', (job, err) => {
 
 worker.on('ready', () => {
   console.log('worker ready, consuming due-reminders');
+  touchHeartbeat();
 });
+
+// keep the healthcheck happy while the queue is idle
+setInterval(touchHeartbeat, 30000);
 
 async function shutdown() {
   console.log('worker shutting down');
