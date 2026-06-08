@@ -62,6 +62,14 @@ services:
     depends_on:
       api: { condition: service_healthy }
     restart: always
+    # override the image's localhost-based healthcheck -- busybox wget tries
+    # ::1 first and nginx is IPv4-only, so we hit 127.0.0.1 explicitly
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
 
   caddy:
     image: caddy:2-alpine
@@ -80,12 +88,9 @@ services:
       web: { condition: service_started }
       api: { condition: service_healthy }
     restart: always
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # no healthcheck: caddy image has no wget/curl, and writing one with
+    # the caddy binary alone is fragile. caddy logs are the SLI here.
+    # if caddy crashes the restart policy and our smoke test catch it.
 
 volumes:
   pgdata:
