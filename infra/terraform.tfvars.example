@@ -1,0 +1,22 @@
+# copy to terraform.tfvars (gitignored) and fill in. all of these have
+# defaults except for the ones marked REQUIRED below.
+
+# project_id       = "formulai"
+# region           = "europe-west1"
+# zone             = "europe-west1-b"
+# machine_type     = "e2-small"
+# name_prefix      = "tasks"
+# allowed_ssh_cidr = "0.0.0.0/0"      # narrow to your /32 if you can
+# domain           = ""                # leave empty -> <ip>.nip.io
+# image_owner      = "ClydeTN"
+# github_repo      = "ClydeTN/kamka-tasks"
+
+# REQUIRED -- the contact email Let's Encrypt sends expiry/revocation alerts to
+acme_email = "you@example.com"
+
+# REQUIRED -- public keys allowed to ssh as the deploy user.
+# include the CI deploy key FIRST and any human keys after.
+ssh_pub_keys = [
+  "ssh-ed25519 AAAA... kamka-tasks-ci-deploy",
+  # "ssh-ed25519 AAAA... your-laptop",
+]
