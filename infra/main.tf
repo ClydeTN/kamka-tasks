@@ -7,7 +7,7 @@ locals {
   labels = {
     component = "tasks-stack"
     managed   = "terraform"
-    repo      = replace(var.github_repo, "/", "-")
+    repo      = lower(replace(var.github_repo, "/", "-"))
   }
 }
 
