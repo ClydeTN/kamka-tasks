@@ -2,10 +2,23 @@ name: ci
 
 on:
   pull_request:
+    # PR-level paths-ignore -- a docs-only PR doesn't kick off any jobs.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - '.env.example'
+      - 'LICENSE'
   push:
-    branches: [main, develop]   # PRs always run CI; pushes to main/develop too.
-                                # deploy.yml only fires on main, so develop is
-                                # validated but never auto-deployed.
+    # pushes to main/develop validate code; deploy.yml is what actually
+    # ships to prod (and that has its own narrower filter).
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - '.env.example'
+      - 'LICENSE'
 
 concurrency:
   group: ci-${{ github.ref }}

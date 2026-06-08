@@ -6,6 +6,17 @@ name: deploy
 on:
   push:
     branches: [main]
+    # only deploy when something the VM actually runs has changed.
+    # docs, the dev compose files, the local .env.example, etc. never
+    # trigger a release. `workflow_dispatch` below stays open for the
+    # emergency button.
+    paths:
+      - 'api/**'
+      - 'worker/**'
+      - 'web/**'
+      - 'deploy/**'
+      - 'compose.prod.yaml'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 concurrency:
